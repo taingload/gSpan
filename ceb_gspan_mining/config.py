@@ -68,3 +68,10 @@ parser.add_argument(
     help='bool, output where one frequent subgraph appears in database, '
          'default off'
 )
+parser.add_argument(
+    '-ck', '--check_featureblack',
+    type=str2bool,
+    default=False,
+    help='bool, check feature black '
+         'default off'
+)

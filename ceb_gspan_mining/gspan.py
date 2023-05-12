@@ -9,18 +9,16 @@ import copy
 import itertools
 import time
 
-from .ceb_graph import AUTO_EDGE_ID
-from .ceb_graph import Graph
-from .ceb_graph import VACANT_GRAPH_ID
-from .ceb_graph import VACANT_VERTEX_LABEL
+from .graph import AUTO_EDGE_ID
+from .graph import Graph
+from .graph import VACANT_GRAPH_ID
+from .graph import VACANT_VERTEX_LABEL
 
 import pandas as pd
-from tqdm import tqdm
 
 
 def record_timestamp(func):
     """Record timestamp before and after call of `func`."""
-
     def deco(self):
         self.timestamps[func.__name__ + '_in'] = time.time()
         func(self)
@@ -122,12 +120,7 @@ class DFScode(list):
             [dfsedge.frm for dfsedge in self] +
             [dfsedge.to for dfsedge in self]
         ))
-    def checkValid(self):
-        "检查是否满足条件：在周围邻居里包含 feature_black=1的公司"
-        for dfsedge in self:
-            vlb1, elb, vlb2 = dfsedge.vevlb
-            if vlb1 > 1 or vlb2 > 1: return True
-        return False
+
 
 class PDFS(object):
     """PDFS class."""
@@ -198,7 +191,7 @@ class gSpan(object):
                  is_undirected=True,
                  verbose=False,
                  visualize=False,
-                 where=False,check_featureblack=False, graph_dict={}):
+                 where=False):
         """Initialize gSpan instance."""
         self._database_file_name = database_file_name
         self.graphs = dict()
@@ -217,7 +210,6 @@ class gSpan(object):
         self._verbose = verbose
         self._visualize = visualize
         self._where = where
-        self._check_featureblack = check_featureblack
         self.timestamps = dict()
         if self._max_num_vertices < self._min_num_vertices:
             print('Max number of vertices can not be smaller than '
@@ -225,7 +217,6 @@ class gSpan(object):
                   'Set max_num_vertices = min_num_vertices.')
             self._max_num_vertices = self._min_num_vertices
         self._report_df = pd.DataFrame()
-        self.graph_dict = graph_dict
 
     def time_stats(self):
         """Print stats of time."""
@@ -245,100 +236,33 @@ class gSpan(object):
         return self
 
     @record_timestamp
-    def _read_graphs(self, is_ceb=True):
+    def _read_graphs(self,is_ceb= False,graph_dict= {}):
         self.graphs = dict()
-        graph_id = self.graph_dict['group_id']
-        vertex_id = self.graph_dict['vertex_id']
-        edge_src = self.graph_dict['edge_src']
-        edge_dst = self.graph_dict['edge_dst']
-
-        if is_ceb:
-            edges = pd.read_csv(self._database_file_name+"/edges.csv", sep=',')
-            vertexes = pd.read_csv(
-                self._database_file_name + "/vertexes.csv", sep=',')
-            graphmap = pd.read_csv(
-                self._database_file_name + "/graph_map.csv", sep= ',')
-            vertexes.rename(
-                columns={graph_id: 'group_id', vertex_id: "vertex_id"}, inplace=True)
-
-            vertexes["node_label_change"] = vertexes["node_label_1"] * 2 \
-                                +vertexes["node_label_0"]
-            edges.rename(columns={edge_src: 'edge_src',
-                         edge_dst: "edge_dst"}, inplace=True)
-            edges = edges[['edge_src','edge_dst','edge_type']].drop_duplicates()
-            # vertexes["group_id"] = vertexes[graph_id]
-            # vertexes["vertex_id"] = vertexes[vertex_id]
-            # edges["edge_src"] = edges[edge_src]
-            # edges["edge_dst"] = edges[edge_dst]
-            graphs = vertexes["group_id"].drop_duplicates()
-             
-            for i in tqdm(range(len(graphs))):
-                g_id = graphs.iloc[i]
-                origin_id = graphmap[graphmap["graph_id"]==g_id]["origin_id"].values[0]
-                tgraph = Graph(g_id, is_undirected=self._is_undirected,
-                               eid_auto_increment=True,origin_id=origin_id)
-
-                vertexes_pd = vertexes[vertexes.group_id == g_id][[
-                    "vertex_id", "node_label_change"]]
-                tgraph.add_vertex_pd(vertexes_pd)
-
-                graph_edges = edges[edges.edge_src.isin(vertexes_pd["vertex_id"])
-                                    & edges.edge_dst.isin(vertexes_pd["vertex_id"])]
-
-                froms = graph_edges["edge_src"].tolist()
-                toes = graph_edges["edge_dst"].tolist()
-                types = graph_edges["edge_type"].tolist()
-                for frm, to, edge_type in zip(froms, toes, types):
-                    tgraph.add_edge(AUTO_EDGE_ID, frm, to, edge_type)
-
-                self.graphs[i] = tgraph
-        else:
-            with codecs.open(self._database_file_name, 'r', 'utf-8') as f:
-                lines = [line.strip() for line in f.readlines()]
-                tgraph, graph_cnt = None, 0
-                for i, line in enumerate(lines):
-                    cols = line.split(' ')
-                    if cols[0] == 't':
-                        if tgraph is not None:
-                            self.graphs[graph_cnt] = tgraph
-                            graph_cnt += 1
-                            tgraph = None
-                        if cols[-1] == '-1' or graph_cnt >= self._max_ngraphs:
-                            break
-                        tgraph = Graph(graph_cnt,
-                                       is_undirected=self._is_undirected,
-                                       eid_auto_increment=True)
-                    elif cols[0] == 'v':
-                        tgraph.add_vertex(cols[1], cols[2])
-                    elif cols[0] == 'e':
-                        tgraph.add_edge(
-                            AUTO_EDGE_ID, cols[1], cols[2], cols[3])
-                # adapt to input files that do not end with 't # -1'
-                if tgraph is not None:
-                    self.graphs[graph_cnt] = tgraph
-
+        
+        with codecs.open(self._database_file_name, 'r', 'utf-8') as f:
+            lines = [line.strip() for line in f.readlines()]
+            tgraph, graph_cnt = None, 0
+            for i, line in enumerate(lines):
+                cols = line.split(' ')
+                if cols[0] == 't':
+                    if tgraph is not None:
+                        self.graphs[graph_cnt] = tgraph
+                        graph_cnt += 1
+                        tgraph = None
+                    if cols[-1] == '-1' or graph_cnt >= self._max_ngraphs:
+                        break
+                    tgraph = Graph(graph_cnt,
+                                   is_undirected=self._is_undirected,
+                                   eid_auto_increment=True)
+                elif cols[0] == 'v':
+                    tgraph.add_vertex(cols[1], cols[2])
+                elif cols[0] == 'e':
+                    tgraph.add_edge(AUTO_EDGE_ID, cols[1], cols[2], cols[3])
+            # adapt to input files that do not end with 't # -1'
+            if tgraph is not None:
+                self.graphs[graph_cnt] = tgraph
+        
         return self
-
-    def read_graphs_stimulate(self, vertexes, edges):
-        self.graphs = dict()
-
-        graphs = vertexes["group_id"].drop_duplicates()
-        for i in range(len(graphs)):
-            g_id = graphs.iloc[i]
-            tgraph = Graph(g_id, is_undirected=self._is_undirected,
-                           eid_auto_increment=True, origin_id=g_id)
-            vertexes["node_label_change"] = vertexes["node_label_1"] * \
-                2+vertexes["node_label_0"]
-            tgraph.add_vertex_pd(vertexes[vertexes.group_id == g_id][[
-                                 "vertex_id", "node_label_change"]])
-            graph_edges = edges[edges.group_id == g_id]
-            froms = graph_edges["edge_src"].tolist()
-            toes = graph_edges["edge_dst"].tolist()
-            types = graph_edges["edge_type"].tolist()
-            for frm, to, edge_type in zip(froms, toes, types):
-                tgraph.add_edge(AUTO_EDGE_ID, frm, to, edge_type)
-
-            self.graphs[i] = tgraph
 
     @record_timestamp
     def _generate_1edge_frequent_subgraphs(self):
@@ -358,11 +282,9 @@ class gSpan(object):
                     if (g.gid, (vlb1, e.elb, vlb2)) not in vevlb_counter:
                         vevlb_counter[(vlb1, e.elb, vlb2)] += 1
                     vevlb_counted.add((g.gid, (vlb1, e.elb, vlb2)))
-
         # add frequent vertices.
         for vlb, cnt in vlb_counter.items():
             if cnt >= self._min_support:
-                if vlb != 1:continue
                 g = Graph(gid=next(self._counter),
                           is_undirected=self._is_undirected)
                 g.add_vertex(0, vlb)
@@ -378,28 +300,6 @@ class gSpan(object):
     def run(self):
         """Run the gSpan algorithm."""
         self._read_graphs()
-        self._generate_1edge_frequent_subgraphs()
-        if self._max_num_vertices < 2:
-            return
-        root = collections.defaultdict(Projected)
-        for gid, g in self.graphs.items():
-            for vid, v in g.vertices.items():
-                edges = self._get_forward_root_edges(g, vid)
-                for e in edges:
-                    if v.vlb ==1:
-                        root[(v.vlb, e.elb, g.vertices[e.to].vlb)].append(
-                            PDFS(gid, e, None)
-                        )
-
-        for vevlb, projected in root.items():
-            if vevlb[0] != 1:continue
-            self._DFScode.append(DFSedge(0, 1, vevlb))
-            self._subgraph_mining(projected)
-            self._DFScode.pop()
-
-    def run_stimulate(self, vertexes_in, edges_in):
-        """Run the gSpan algorithm."""
-        self.read_graphs_stimulate(vertexes_in, edges_in)
         self._generate_1edge_frequent_subgraphs()
         if self._max_num_vertices < 2:
             return
@@ -429,7 +329,6 @@ class gSpan(object):
         self._frequent_subgraphs.append(copy.copy(self._DFScode))
         if self._DFScode.get_num_vertices() < self._min_num_vertices:
             return
-        if self._check_featureblack and not self._DFScode.checkValid():return 
         g = self._DFScode.to_graph(gid=next(self._counter),
                                    is_undirected=self._is_undirected)
         display_str = g.display()
@@ -463,9 +362,6 @@ class gSpan(object):
     def _get_backward_edge(self, g, e1, e2, history):
         if self._is_undirected and e1 == e2:
             return None
-        if e2.to  not in g.vertices.keys():
-            print("g ",g.gid," not get ",e2.to,"\n g.vertices:",g.vertices.keys)
-            return None
         for to, e in g.vertices[e2.to].edges.items():
             if history.has_edge(e.eid) or e.to != e1.frm:
                 continue
@@ -488,9 +384,6 @@ class gSpan(object):
 
     def _get_forward_pure_edges(self, g, rm_edge, min_vlb, history):
         result = []
-        if rm_edge.to  not in g.vertices.keys():
-            print("g ",g.gid," not get ",rm_edge.to,"\n g.vertices:",g.vertices.keys)
-            return None
         for to, e in g.vertices[rm_edge.to].edges.items():
             if min_vlb <= g.vertices[e.to].vlb and (
                     not history.has_vertex(e.to)):
@@ -649,23 +542,21 @@ class gSpan(object):
                                                  history.edges[rmpath[0]],
                                                  min_vlb,
                                                  history)
-
-            if edges: 
+            for e in edges:
+                forward_root[
+                    (maxtoc, e.elb, g.vertices[e.to].vlb)
+                ].append(PDFS(g.gid, e, p))
+            # rmpath forward
+            for rmpath_i in rmpath:
+                edges = self._get_forward_rmpath_edges(g,
+                                                       history.edges[rmpath_i],
+                                                       min_vlb,
+                                                       history)
                 for e in edges:
                     forward_root[
-                        (maxtoc, e.elb, g.vertices[e.to].vlb)
+                        (self._DFScode[rmpath_i].frm,
+                         e.elb, g.vertices[e.to].vlb)
                     ].append(PDFS(g.gid, e, p))
-                # rmpath forward
-                for rmpath_i in rmpath:
-                    edges = self._get_forward_rmpath_edges(g,
-                                                        history.edges[rmpath_i],
-                                                        min_vlb,
-                                                        history)
-                    for e in edges:
-                        forward_root[
-                            (self._DFScode[rmpath_i].frm,
-                            e.elb, g.vertices[e.to].vlb)
-                        ].append(PDFS(g.gid, e, p))
 
         # backward
         for to, elb in backward_root:
